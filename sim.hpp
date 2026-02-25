@@ -48,6 +48,7 @@ class Simulation {
         partition_domain();
         initialize_grid();
         initialize_agents();
+        run();
     }
 
     void partition_domain(){
@@ -64,11 +65,11 @@ class Simulation {
     void run() {
       for(int t = 0; t < T; ++t) {
         update_season(t);
-        exchange_halos();
-        process_agents();
-        migrate_agents();
-        update_grid();
-        collect_metrics();
+      //  exchange_halos();
+      //  process_agents();
+      //  migrate_agents();
+      //  update_grid();
+      //  collect_metrics();
       }
     }
 
@@ -103,21 +104,74 @@ class Simulation {
         }
       }
     }
+
+    void test_initialization() {
+      if (!local_grid.empty()) {
+        const Cell& c = local_grid[0];
+        std::cout << "[Rank " << rank << "] Primeira Célula - Tipo: " << (int)c.type << "| Recurso: " << c.resource << std::endl;
+      }
+
+      MPI_Barrier(MPI_COMM_WORLD);
+      int out_of_bound = 0;
+      for (const auto& a : local_agents) {
+        if (a.x < offsetX || a.x >= offsetX + local_W ||
+            a.y < offsetY || a.y >= offsetY + local_H){
+          out_of_bound++;
+        }
+      }
+
+      if (rank == 0) std::cout << "agent validation" << std::endl;
+
+      std::cout << "[Rank " << rank << "] Agents locais: " << local_agents.size() << " | Fora dos limites: " << out_of_bound << std::endl;
+
+      MPI_Barrier(MPI_COMM_WORLD);
+    }
+
   private:
     void update_season(int t) {
-		if (t % S == 0) {
-			current_season = (current_season == Season::SECA) ? Season::CHEIA : Season::SECA;
+      if (t % S == 0){
+        if (rank == 0) {
+          current_season = (current_season == Season::SECA) ? Season::CHEIA : Season::SECA;
+        }
 
-			int season_int = static_cast<int>(current_season);
-			MPI_Bcast(&season_int, 1, MPI_INT, 0, MPI_COMM_WORLD);
-			current_season = static_cast<Season>(season_int);
-		}
-	}
-    void exchange_halos(){};
-    void process_agents(){};
-    void migrate_agents(){};
-    void update_grid(){};
-    void collect_metrics(){};
+        int season_val = static_cast<int>(current_season);
+        MPI_Bcast(&season_val, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+        current_season = static_cast<Season>(season_val);
+
+        if (rank == 0) {
+          std::cout << "[Ciclo " << t << "] Mudança de estação: "
+                    << (current_season == Season::SECA ? "SECA" : "CHEIA") << std::endl;
+        }
+      }
+    }
+    
+    void exchange_halos() {
+      int up_neighbor = (rank > 0) ? rank - 1 : MPI_PROC_NULL;
+      int down_neighbor = (rank < num_procs - 1) ? rank + 1 : MPI_PROC_NULL;
+
+      std::vector<float> send_up(local_W), send_down(local_W);
+      std::vector<float> recv_up(local_W, 0.0f), recv_down(local_W, 0.0f);
+
+      for (int i = 0; i < local_W; ++i) {
+        send_up[i] = local_grid[i].resource;
+        send_down[i] = local_grid[(local_H - 1) * local_W + i].resource;
+      }
+
+      MPI_Sendrecv(send_up.data(), local_W, MPI_FLOAT, up_neighbor, 0,
+                   recv_up.data(), local_W, MPI_FLOAT, up_neighbor, 0,
+                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      MPI_Sendrecv(send_down.data(), local_W, MPI_FLOAT, down_neighbor, 0,
+                   recv_down.data(), local_W, MPI_FLOAT, down_neighbor, 0,
+                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    }
+    
+    void process_agents();
+    void migrate_agents();
+    void update_grid();
+    void collect_metrics();
 
     void initialize_grid() {
       srand(42 + rank);
