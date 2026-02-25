@@ -34,6 +34,9 @@ class Simulation {
     int local_W, local_H;
     int offsetX, offsetY;
 
+    std::vector<float> recv_up;
+    std::vector<float> recv_down;
+
     std::vector<Cell> local_grid;
     std::vector<Agent> local_agents;
     Season current_season;
@@ -41,9 +44,12 @@ class Simulation {
   public:
     Simulation(int w, int h, int t, int s, int n_agents)
       : W(w), H(h), T(t), S(s), total_agents(n_agents), current_season(Season::SECA) {
-        
+
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+
+        recv_up.assign(local_W, 0.0f);
+        recv_down.assign(local_W, 0.0f);
 
         partition_domain();
         initialize_grid();
@@ -65,7 +71,7 @@ class Simulation {
     void run() {
       for(int t = 0; t < T; ++t) {
         update_season(t);
-      //  exchange_halos();
+        test_exchange_halos();//exchange_halos();
       //  process_agents();
       //  migrate_agents();
       //  update_grid();
@@ -127,6 +133,40 @@ class Simulation {
       MPI_Barrier(MPI_COMM_WORLD);
     }
 
+    void test_exchange_halos() {
+    // 1. Forçar um valor identificável na primeira e última linha de cada rank
+    // Usaremos o valor do rank + 100 para diferenciar de recursos iniciais
+    for (int i = 0; i < local_W; ++i) {
+        local_grid[i].resource = (float)(rank + 100); // Primeira linha
+        local_grid[(local_H - 1) * local_W + i].resource = (float)(rank + 100); // Última linha
+    }
+
+    // 2. Executar a troca (precisamos de buffers para receber os dados)
+    // No seu caso, garanta que os buffers recv_up e recv_down existam na classe
+    exchange_halos(); 
+
+    // 3. Verificar se os valores recebidos batem com os ranks dos vizinhos
+    bool success = true;
+    if (rank > 0) { // Tem vizinho acima
+        if (recv_up[0] != (float)(rank - 1 + 100)) success = false;
+    }
+    if (rank < num_procs - 1) { // Tem vizinho abaixo
+        if (recv_down[0] != (float)(rank + 1 + 100)) success = false;
+    }
+
+    // 4. Reportar resultado
+    for (int i = 0; i < num_procs; ++i) {
+        if (rank == i) {
+            if (success) {
+                std::cout << "[Rank " << rank << "] Teste de Halo: SUCESSO" << std::endl;
+            } else {
+                std::cout << "[Rank " << rank << "] Teste de Halo: FALHA (Valores incorretos)" << std::endl;
+            }
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+    }
+}
+
   private:
     void update_season(int t) {
       if (t % S == 0){
@@ -151,7 +191,6 @@ class Simulation {
       int down_neighbor = (rank < num_procs - 1) ? rank + 1 : MPI_PROC_NULL;
 
       std::vector<float> send_up(local_W), send_down(local_W);
-      std::vector<float> recv_up(local_W, 0.0f), recv_down(local_W, 0.0f);
 
       for (int i = 0; i < local_W; ++i) {
         send_up[i] = local_grid[i].resource;
