@@ -10,10 +10,6 @@ int main (int argc, char *argv[]) {
   try {
     Simulation sim(W, H, T, S, N_agents);
 
-    //sim.test_partitioning(); MPI_Barrier(MPI_COMM_WORLD);
-    //sim.verify_consistency(); MPI_Barrier(MPI_COMM_WORLD);
-    //sim.test_initialization(); MPI_Barrier(MPI_COMM_WORLD);
-
   } catch (const std::exception& e) {
     std::cerr << "Erro durante a simulação: " << e.what() << std::endl;
   }
