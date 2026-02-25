@@ -96,7 +96,7 @@ class Simulation {
         std::cout << "Celulas totais esperadas: " << (long)W*H << std::endl;
         std::cout << "Celulas totais calculadas: " << total_cells << std::endl;
 
-        if (total_cells = (long)W*H) {
+        if (total_cells == (long)W*H) {
           std::cout << "SUCESSO" << std::endl;
         } else {
           std::cerr << "ERRO" << std::endl;
@@ -104,12 +104,20 @@ class Simulation {
       }
     }
   private:
-    void update_season(int t);
-    void exchange_halos();
-    void process_agents();
-    void migrate_agents();
-    void update_grid();
-    void collect_metrics();
+    void update_season(int t) {
+		if (t % S == 0) {
+			current_season = (current_season == Season::SECA) ? Season::CHEIA : Season::SECA;
+
+			int season_int = static_cast<int>(current_season);
+			MPI_Bcast(&season_int, 1, MPI_INT, 0, MPI_COMM_WORLD);
+			current_season = static_cast<Season>(season_int);
+		}
+	}
+    void exchange_halos(){};
+    void process_agents(){};
+    void migrate_agents(){};
+    void update_grid(){};
+    void collect_metrics(){};
 
     void initialize_grid() {
       srand(42 + rank);
