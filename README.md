@@ -56,5 +56,3 @@ Ao final da simulação (ou periodicamente), o Rank 0 realiza o Gather/Reduce gl
 - Mapa Visual: Visualização do esgotamento ou fartura das fatias do grid.
 - Conservação de Massa: Contagem total de agentes vivos (valida a eficácia e a ausência de vazamentos na migração MPI).
 - Consumo Acumulado: O montante total de recursos extraídos, servindo de métrica base para o cálculo da carga útil distribuída processada pelo cluster.
-
-```
