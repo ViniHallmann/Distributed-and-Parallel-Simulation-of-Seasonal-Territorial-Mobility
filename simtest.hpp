@@ -77,6 +77,7 @@ class Simulation {
 
       for(int t = 0; t < T; ++t) {
         update_season(t);
+        //test_exchange_halos();
         exchange_halos();
         process_agents();
         migrate_agents();
@@ -92,6 +93,89 @@ class Simulation {
       double end_time = MPI_Wtime();
       if (rank == 0) {
         std::cout << "[Desempenho] Tempo total de simulação " << (end_time - start_time) << " segundos." << std::endl;
+      }
+    }
+
+    void test_partitioning() {
+      for (int i = 0; i < num_procs; ++i){
+        if (rank == i) {
+          std::cout << "[Rank " << rank << "/" << num_procs-1 << "] "
+                    << "Subgrid Local: " << local_W << "x" << local_H
+                    << " | Offset Global: (" << offsetX << ", " << offsetY << ")"
+                    << " | Cobre de Y=" << offsetY << " ate Y=" << (offsetY + local_H - 1)
+                    << std::endl << std::flush;
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+      }
+    }
+
+    void verify_consistency() {
+      long local_cells = local_W * local_H;
+      long total_cells = 0;
+
+      MPI_Reduce(&local_cells, &total_cells, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+      
+      if (rank == 0) {
+        std::cout << "--- verify_consistency ---" << std::endl;
+        std::cout << "Celulas totais esperadas: " << (long)W*H << std::endl;
+        std::cout << "Celulas totais calculadas: " << total_cells << std::endl;
+
+        if (total_cells == (long)W*H) {
+          std::cout << "SUCESSO" << std::endl;
+        } else {
+          std::cerr << "ERRO" << std::endl;
+        }
+      }
+    }
+
+    void test_initialization() {
+      if (!local_grid.empty()) {
+        const Cell& c = local_grid[0];
+        std::cout << "[Rank " << rank << "] Primeira Célula - Tipo: " << (int)c.type << "| Recurso: " << c.resource << std::endl;
+      }
+
+      MPI_Barrier(MPI_COMM_WORLD);
+      int out_of_bound = 0;
+      for (const auto& a : local_agents) {
+        if (a.x < offsetX || a.x >= offsetX + local_W ||
+            a.y < offsetY || a.y >= offsetY + local_H){
+          out_of_bound++;
+        }
+      }
+
+      if (rank == 0) std::cout << "agent validation" << std::endl;
+
+      std::cout << "[Rank " << rank << "] Agents locais: " << local_agents.size() << " | Fora dos limites: " << out_of_bound << std::endl;
+
+      MPI_Barrier(MPI_COMM_WORLD);
+    }
+
+    void test_exchange_halos() {
+      for (int i = 0; i < local_W; ++i) {
+         local_grid[i].resource = (float)(rank + 100); // Primeira linha
+         local_grid[(local_H - 1) * local_W + i].resource = (float)(rank + 100); // Última linha
+      }
+  
+      exchange_halos(); 
+  
+      bool success = true;
+      if (rank > 0) { // Tem vizinho acima
+          if (recv_up[0] != (float)(rank - 1 + 100)) success = false;
+      } 
+      if (rank < num_procs - 1) { // Tem vizinho abaixo
+        if (recv_down[0] != (float)(rank + 1 + 100)) success = false;
+      }
+
+      // 4. Reportar resultado
+      for (int i = 0; i < num_procs; ++i) {
+          if (rank == i) {
+              if (success) {
+                  std::cout << "[Rank " << rank << "] Teste de Halo: SUCESSO" << std::endl;
+             } else {
+                 std::cout << "[Rank " << rank << "] Teste de Halo: FALHA (Valores incorretos)" << std::endl;
+             }
+          }
+          MPI_Barrier(MPI_COMM_WORLD);
       }
     }
 
