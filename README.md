@@ -4,12 +4,12 @@ Este projeto implementa uma simulação distribuída e paralelizada de um ecossi
 
 O objetivo da simulação é modelar o comportamento de agentes autônomos (representando indivíduos como pescadores ou coletores) que se movem por um grid espacial, consumindo recursos naturais que se regeneram sazonalmente. O projeto demonstra conceitos avançados de Computação de Alto Desempenho (HPC), incluindo particionamento de domínio, troca de halos, migração de dados entre nós de processamento e concorrência segura entre threads.
 
-## 🚀 Tecnologias Utilizadas
+## Tecnologias Utilizadas
 * **C++** (Padrão C++17 recomendado)
 * **MPI** (OpenMPI / MPICH) para paralelismo inter-nós (memória distribuída).
 * **OpenMP** para paralelismo intra-nós (memória compartilhada).
 
-## ⚙️ Arquitetura de Paralelização
+## Arquitetura de Paralelização
 
 A simulação foi dividida em duas camadas de paralelismo para maximizar a eficiência computacional:
 
@@ -24,13 +24,13 @@ A simulação foi dividida em duas camadas de paralelismo para maximizar a efici
 * **Regeneração de Matriz:** A regeneração sazonal do grid utiliza `#pragma omp parallel for collapse(2)` para otimizar o balanceamento de carga no acesso à memória bidimensional.
 * **Redução para Métricas:** A coleta de métricas globais utiliza a cláusula `reduction` do OpenMP em conjunto com o `MPI_Reduce` para garantir contagens exatas sem gargalos de sincronização.
 
-## 🌍 Regras do Ecossistema
+## Regras do Ecossistema
 
 1. **Sazonalidade:** O sistema alterna entre duas estações (`CHEIA` e `SECA`) a cada $S$ ciclos. Na estação cheia, os recursos regeneram rapidamente; na seca, o ambiente sofre colapso.
 2. **Carga Sintética:** Cada agente executa um volume de operações matemáticas atreladas à quantidade de recurso da célula, simulando o custo computacional real de processamento em HPC.
 3. **Migração Física:** O esgotamento dos recursos em um nó força os agentes a migrarem fisicamente na memória para nós adjacentes para evitar a inanição.
 
-## 🛠️ Compilação e Execução
+## Compilação e Execução
 
 Para compilar o projeto, você precisará de um compilador C++ com suporte a MPI e OpenMP instalado no seu cluster ou ambiente de desenvolvimento (ex: `gcc`, `openmpi`).
 
@@ -39,7 +39,7 @@ Para compilar o projeto, você precisará de um compilador C++ com suporte a MPI
 mpic++ -O3 -fopenmp main.cpp -o sim
 ```
 
-(A flag -O3 é recomendada para otimização de performance da carga sintética).
+> (A flag -O3 é recomendada para otimização de performance da carga sintética).
 ### Execução
 
 Defina o número de threads OpenMP por processo e execute com o mpirun ou mpiexec. Exemplo para rodar com 4 processos MPI, sendo 4 threads OpenMP por processo:
@@ -47,6 +47,14 @@ Defina o número de threads OpenMP por processo e execute com o mpirun ou mpiexe
 export OMP_NUM_THREADS=4
 mpirun -np 4 ./sim
 ```
-(Nota: Os parâmetros do tamanho do grid (W,H), ciclos (T), tamanho da estação (S) e número de agentes (N) podem ser ajustados na função main()).
+> (Nota: Os parâmetros do tamanho do grid (W,H), ciclos (T), tamanho da estação (S) e número de agentes (N) podem ser ajustados na função main()).
+
+### Métricas e Validação
+
+Ao final da simulação (ou periodicamente), o Rank 0 realiza o Gather/Reduce global e reporta:
+
+- Mapa Visual: Visualização do esgotamento ou fartura das fatias do grid.
+- Conservação de Massa: Contagem total de agentes vivos (valida a eficácia e a ausência de vazamentos na migração MPI).
+- Consumo Acumulado: O montante total de recursos extraídos, servindo de métrica base para o cálculo da carga útil distribuída processada pelo cluster.
 
 ```
