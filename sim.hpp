@@ -178,7 +178,7 @@ class Simulation {
           int ly = a.y - offsetY;
           float r = local_grid[ly * local_W + lx].resource;
 
-          //execute_synthetic_load(r);
+          execute_synthetic_load(r);
 
           auto [next_x, next_y] = decide_destination(a);
 
@@ -343,6 +343,7 @@ class Simulation {
     
       volatile float dummy = 0.0f;
       for(int c = 0; c < iterations; c++) {
+        for(int d = 0; d < iterations; d++)
           dummy += r * 0.01f;
       }
     }
