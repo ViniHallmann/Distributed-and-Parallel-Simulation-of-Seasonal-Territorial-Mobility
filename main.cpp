@@ -5,7 +5,7 @@
 int main (int argc, char *argv[]) {
   MPI_Init(&argc, &argv);
 
-  int W = 100, H = 100, T = 10, S = 2, N_agents = 1000;
+  int W = 10, H = 10, T = 20, S = 5, N_agents = 500;
 
   try {
     Simulation sim(W, H, T, S, N_agents);

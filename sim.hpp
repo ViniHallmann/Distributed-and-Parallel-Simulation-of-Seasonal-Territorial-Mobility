@@ -41,6 +41,8 @@ class Simulation {
     std::vector<Agent> local_agents;
     Season current_season;
 
+    std::vector<Agent> to_up, to_down;
+
   public:
     Simulation(int w, int h, int t, int s, int n_agents)
       : W(w), H(h), T(t), S(s), total_agents(n_agents), current_season(Season::SECA) {
@@ -48,10 +50,11 @@ class Simulation {
         MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
 
+        partition_domain();
+
         recv_up.assign(local_W, 0.0f);
         recv_down.assign(local_W, 0.0f);
 
-        partition_domain();
         initialize_grid();
         initialize_agents();
         run();
@@ -71,11 +74,13 @@ class Simulation {
     void run() {
       for(int t = 0; t < T; ++t) {
         update_season(t);
-        test_exchange_halos();//exchange_halos();
-      //  process_agents();
-      //  migrate_agents();
-      //  update_grid();
+        //test_exchange_halos();
+        exchange_halos();
+        process_agents();
+        migrate_agents();
+        update_grid();
       //  collect_metrics();
+        visualize_resources(t);
       }
     }
 
@@ -134,38 +139,66 @@ class Simulation {
     }
 
     void test_exchange_halos() {
-    // 1. Forçar um valor identificável na primeira e última linha de cada rank
-    // Usaremos o valor do rank + 100 para diferenciar de recursos iniciais
-    for (int i = 0; i < local_W; ++i) {
-        local_grid[i].resource = (float)(rank + 100); // Primeira linha
-        local_grid[(local_H - 1) * local_W + i].resource = (float)(rank + 100); // Última linha
-    }
-
-    // 2. Executar a troca (precisamos de buffers para receber os dados)
-    // No seu caso, garanta que os buffers recv_up e recv_down existam na classe
-    exchange_halos(); 
-
-    // 3. Verificar se os valores recebidos batem com os ranks dos vizinhos
-    bool success = true;
-    if (rank > 0) { // Tem vizinho acima
-        if (recv_up[0] != (float)(rank - 1 + 100)) success = false;
-    }
-    if (rank < num_procs - 1) { // Tem vizinho abaixo
+      for (int i = 0; i < local_W; ++i) {
+         local_grid[i].resource = (float)(rank + 100); // Primeira linha
+         local_grid[(local_H - 1) * local_W + i].resource = (float)(rank + 100); // Última linha
+      }
+  
+      exchange_halos(); 
+  
+      bool success = true;
+      if (rank > 0) { // Tem vizinho acima
+          if (recv_up[0] != (float)(rank - 1 + 100)) success = false;
+      } 
+      if (rank < num_procs - 1) { // Tem vizinho abaixo
         if (recv_down[0] != (float)(rank + 1 + 100)) success = false;
+      }
+
+      // 4. Reportar resultado
+      for (int i = 0; i < num_procs; ++i) {
+          if (rank == i) {
+              if (success) {
+                  std::cout << "[Rank " << rank << "] Teste de Halo: SUCESSO" << std::endl;
+             } else {
+                 std::cout << "[Rank " << rank << "] Teste de Halo: FALHA (Valores incorretos)" << std::endl;
+             }
+          }
+          MPI_Barrier(MPI_COMM_WORLD);
+      }
     }
 
-    // 4. Reportar resultado
-    for (int i = 0; i < num_procs; ++i) {
-        if (rank == i) {
-            if (success) {
-                std::cout << "[Rank " << rank << "] Teste de Halo: SUCESSO" << std::endl;
-            } else {
-                std::cout << "[Rank " << rank << "] Teste de Halo: FALHA (Valores incorretos)" << std::endl;
-            }
-        }
-        MPI_Barrier(MPI_COMM_WORLD);
+    void visualize_resources(int ciclo) {
+      // 1. Preparar dados locais (apenas o float do recurso)
+      std::vector<float> local_data(local_W * local_H);
+      for (int i = 0; i < local_grid.size(); ++i) {
+         local_data[i] = local_grid[i].resource;
+      }
+
+     // 2. Buffer global no Rank 0
+      std::vector<float> global_grid_data;
+      if (rank == 0) {
+        global_grid_data.resize(W * H);
+      }
+
+      // 3. Reunir todos os subgrids no Rank 0
+      // Como local_W * local_H é constante para todos, usamos MPI_Gather
+      MPI_Gather(local_data.data(), local_W * local_H, MPI_FLOAT,
+                 global_grid_data.data(), local_W * local_H, MPI_FLOAT,
+                 0, MPI_COMM_WORLD);
+
+      // 4. Rank 0 imprime o mapa formatado
+      if (rank == 0) {
+         std::cout << "\n--- Mapa de Recursos (Ciclo " << ciclo << ") ---\n";
+         for (int y = 0; y < H; ++y) {
+             for (int x = 0; x < W; ++x) {
+                 // Formatação simples: valores decimais com 1 casa
+                 printf("%5.1f ", global_grid_data[y * W + x]);
+              }
+             std::cout << "\n";
+          }
+         std::cout << "------------------------------------------\n";
+      }
     }
-}
 
   private:
     void update_season(int t) {
@@ -198,18 +231,139 @@ class Simulation {
       }
 
       MPI_Sendrecv(send_up.data(), local_W, MPI_FLOAT, up_neighbor, 0,
-                   recv_up.data(), local_W, MPI_FLOAT, up_neighbor, 0,
-                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                 recv_down.data(), local_W, MPI_FLOAT, down_neighbor, 0,
+                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-      MPI_Sendrecv(send_down.data(), local_W, MPI_FLOAT, down_neighbor, 0,
-                   recv_down.data(), local_W, MPI_FLOAT, down_neighbor, 0,
-                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      // 2. SHIFT DOWN: Envia para o vizinho de BAIXO, recebe do vizinho de CIMA
+      MPI_Sendrecv(send_down.data(), local_W, MPI_FLOAT, down_neighbor, 1,
+                 recv_up.data(), local_W, MPI_FLOAT, up_neighbor, 1,
+                 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
     }
     
-    void process_agents();
-    void migrate_agents();
-    void update_grid();
+    void process_agents() {
+      std::vector<Agent> next_cycle_agents;
+
+      #pragma omp parallel
+      {
+        std::vector<Agent> thread_local_agents;
+        std::vector<Agent> thread_to_up, thread_to_down;
+
+        #pragma omp for
+        for (int i = 0; i < local_agents.size(); i++) {
+          Agent& a = local_agents[i];
+
+          int lx = a.x - offsetX;
+          int ly = a.y - offsetY;
+          float r = local_grid[ly * local_W + lx].resource;
+
+          //execute_synthetic_load(r);
+
+          auto [next_x, next_y] = decide_destination(a);
+
+          if (next_y >= offsetY && next_y < offsetY + local_H) {
+            consume_resource(a.x, a.y);
+            a.x = next_x;
+            a.y = next_y;
+            thread_local_agents.push_back(a);
+          } else if (next_y < offsetY) {
+            a.y = next_y; a.x = next_x;
+            thread_to_up.push_back(a);
+          } else {
+            a.y = next_y; a.x = next_x;
+            thread_to_down.push_back(a);
+          }
+        }
+
+        #pragma omp critical
+        {
+          next_cycle_agents.insert(next_cycle_agents.end(), thread_local_agents.begin(), thread_local_agents.end());
+          to_up.insert(to_up.end(), thread_to_up.begin(), thread_to_up.end());
+          to_down.insert(to_down.end(), thread_to_down.begin(), thread_to_down.end());
+        }
+      }
+      local_agents = std::move(next_cycle_agents);
+    }
+    void migrate_agents() {
+      int up_neighbor = (rank > 0) ? rank - 1 : MPI_PROC_NULL;
+      int down_neighbor = (rank < num_procs - 1) ? rank + 1 : MPI_PROC_NULL;
+
+      // 1. SHIFT UP: Envia para o vizinho de CIMA, recebe do vizinho de BAIXO
+      int count_to_up = to_up.size();
+      int count_from_down = 0;
+      MPI_Sendrecv(&count_to_up, 1, MPI_INT, up_neighbor, 10,
+                   &count_from_down, 1, MPI_INT, down_neighbor, 10,
+                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      // 2. SHIFT DOWN: Envia para o vizinho de BAIXO, recebe do vizinho de CIMA
+      int count_to_down = to_down.size();
+      int count_from_up = 0;
+      MPI_Sendrecv(&count_to_down, 1, MPI_INT, down_neighbor, 11,
+                   &count_from_up, 1, MPI_INT, up_neighbor, 11,
+                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      // Prepara os buffers de recepção
+      std::vector<Agent> from_down(count_from_down, Agent(0,0,0,0));
+      std::vector<Agent> from_up(count_from_up, Agent(0,0,0,0));
+
+      // PROTEÇÃO CRÍTICA: Se o vetor estiver vazio, passamos um ponteiro de dummy 
+      // para o MPI não dar crash ao ler nullptr.
+      Agent dummy(0,0,0,0);
+      void* ptr_to_up = to_up.empty() ? &dummy : to_up.data();
+      void* ptr_from_down = from_down.empty() ? &dummy : from_down.data();
+      void* ptr_to_down = to_down.empty() ? &dummy : to_down.data();
+      void* ptr_from_up = from_up.empty() ? &dummy : from_up.data();
+
+      // 3. MIGRAR DADOS (Shift UP)
+      MPI_Sendrecv(ptr_to_up, count_to_up * sizeof(Agent), MPI_BYTE, up_neighbor, 20,
+                   ptr_from_down, count_from_down * sizeof(Agent), MPI_BYTE, down_neighbor, 20,
+                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      // 4. MIGRAR DADOS (Shift DOWN)
+      MPI_Sendrecv(ptr_to_down, count_to_down * sizeof(Agent), MPI_BYTE, down_neighbor, 21,
+                   ptr_from_up, count_from_up * sizeof(Agent), MPI_BYTE, up_neighbor, 21,
+                   MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+      // Insere os agentes recebidos na lista local
+      local_agents.insert(local_agents.end(), from_up.begin(), from_up.end());
+      local_agents.insert(local_agents.end(), from_down.begin(), from_down.end());
+
+      // Limpa os buffers para o próximo ciclo
+      to_up.clear();
+      to_down.clear();
+    }
+
+    void update_grid(){
+    // 5.5) Atualizar grid local (OpenMP)
+      
+      // A cláusula collapse(2) funde os dois laços (j e i) em um único laço linear
+      // para distribuir perfeitamente as iterações entre as threads do OpenMP.
+      #pragma omp parallel for collapse(2)
+      for (int j = 0; j < local_H; ++j) {
+        for (int i = 0; i < local_W; ++i) {
+          int index = j * local_W + i;
+          Cell& cell = local_grid[index];
+
+          // 1. Define a taxa de regeneração baseada na sazonalidade
+          float taxa_regeneracao = (current_season == Season::CHEIA) ? 5.0f : 1.0f;
+
+          // Adiciona o recurso
+          cell.resource += taxa_regeneracao;
+
+          // 2. Limita o recurso ao valor máximo daquele tipo de célula (Cap)
+          float limite_maximo = 20.0f; // Padrão para ALDEIA ou ROCADO
+          if (cell.type == CellType::PESCA) {
+              limite_maximo = 100.0f;
+          } else if (cell.type == CellType::COLETA) {
+              limite_maximo = 50.0f;
+          }
+
+          if (cell.resource > limite_maximo) {
+            cell.resource = limite_maximo;
+          }
+        }
+      }
+    }
     void collect_metrics();
 
     void initialize_grid() {
@@ -251,4 +405,78 @@ class Simulation {
             );
       }
     }
+    void execute_synthetic_load(float r) {
+      const int MAX_LOAD = 10000;
+      int iterations = std::min(static_cast<int>(r * 100), MAX_LOAD);
+    
+      volatile float dummy = 0.0f;
+      for(int c = 0; c < iterations; c++) {
+          dummy += r * 0.01f;
+      }
+    }
+
+    std::pair<int, int> decide_destination(const Agent& a) {
+      int best_x = a.x;
+      int best_y = a.y;
+
+      float max_resource = get_resource_at(a.x, a.y);
+
+      int dx[] = {0,0,1,-1};
+      int dy[] = {-1,1,0,0};
+
+      for (int i = 0; i < 4; ++i) {
+        int nx = a.x + dx[i];
+        int ny = a.y + dy[i];
+
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+
+        float neighbor_resource = get_resource_at(nx, ny);
+
+        if (neighbor_resource > max_resource) {
+          max_resource = neighbor_resource;
+          best_x = nx;
+          best_y = ny;
+        }
+      }
+
+      return {best_x, best_y};
+    }
+
+  float get_resource_at(int gx, int gy) {
+    if (gy >= offsetY && gy < offsetY + local_H) {
+      int lx = gx - offsetX;
+      int ly = gy - offsetY;
+
+      return local_grid[ly * local_W + lx].resource;
+    }
+
+    if (gy == offsetY - 1 && rank > 0) {
+      return recv_up[gx - offsetX];
+    }
+
+    if (gy == offsetY + local_H && rank < num_procs - 1) {
+      return recv_down[gx - offsetX];
+    }
+
+    return -1.0f;
+  }
+
+  void consume_resource(int gx, int gy) {
+    int lx = gx - offsetX;
+    int ly = gy - offsetY;
+
+    int index = ly * local_W + lx;
+
+    float taxa_consumo = 5.0f;
+
+    #pragma omp critical
+    {
+      if (local_grid[index].resource >= taxa_consumo) {
+          local_grid[index].resource -= taxa_consumo;
+      } else {
+          // Se o recurso for menor que a taxa, o agente zera o que sobrou
+          local_grid[index].resource = 0.0f;
+      }
+    }
+  }
 };
